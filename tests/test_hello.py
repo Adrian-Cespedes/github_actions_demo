@@ -1,4 +1,4 @@
-from hello import greet, add, is_even
+from hello import add, greet, is_even
 
 
 def test_greet():
