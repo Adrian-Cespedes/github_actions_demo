@@ -1,0 +1,107 @@
+name: CI/CD Pipeline Avanzado
+run-name: "Pipeline ejecutado por ${{ github.actor }} en ${{ github.ref_name }}"
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:  # Permite ejecución manual
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.10", "3.11"]
+    outputs:
+      build_tag: ${{ steps.meta.outputs.tag }}
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Setup Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            pip-${{ runner.os }}-${{ matrix.python-version }}-
+            pip-${{ runner.os }}-
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest-cov
+      
+      - name: Run tests with coverage
+        run: |
+          export PYTHONPATH="${PYTHONPATH}:$(pwd)"
+          pytest --cov=hello --cov-report=xml --cov-report=html
+      
+      - name: Upload coverage reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report-py${{ matrix.python-version }}
+          path: htmlcov/
+      
+      - name: Compute build tag
+        id: meta
+        run: |
+          TS=$(date +%Y%m%d-%H%M%S)
+          echo "tag=${TS}-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install linting tools
+        run: pip install flake8 black isort
+      
+      - name: Run flake8
+        run: flake8 hello.py tests/
+      
+      - name: Run black check
+        run: black --check hello.py tests/
+      
+      - name: Run isort check
+        run: isort --check-only hello.py tests/
+
+  package:
+    needs: [test, lint]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Create package
+        run: |
+          mkdir -p dist
+          cp hello.py dist/
+          cp requirements.txt dist/
+          zip -r "dist/app-${{ needs.test.outputs.build_tag }}.zip" dist/
+      
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-package
+          path: dist/*.zip
+          retention-days: 30
